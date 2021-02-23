@@ -1,132 +1,287 @@
-import { IMessage } from './domain/message';
-import { Operation } from './domain/operation';
+import { IMessage } from './domain/IMessage';
+import { Operation } from './domain/Operation';
+import { ICommand } from './domain/ICommand';
+import { MessageHandler } from './domain/MessageHandler';
 
 const form = document.querySelector('.form') as HTMLFormElement;
 const log = document.querySelector('.log') as HTMLLIElement;
 
-const messageHandlers = new Map<Operation, Function>();
+interface IWriter<T> {
+  write(chunk: T): void;
+  clear(): void;
+}
 
-let worker: Worker;
-let timer: number;
-let timeStarted: number;
-let pushedStack = [];
-let enqueuedStack = [];
+class ElementWriter<T extends string> implements IWriter<T> {
+  constructor(private readonly element: HTMLElement) {}
 
-form.onsubmit = (e) => {
-  const interval = Number.parseInt(form.interval.value);
+  write(chunk: string) {
+    const li = document.createElement('li');
 
-  e.preventDefault();
+    li.textContent = chunk;
+    this.element.append(li);
 
-  clearMessageLog();
-  disableForm();
-  createWorker();
-
-  startSorting();
-
-  if (!Number.isNaN(interval)) {
-    scheduleRandom(interval);
+    li.scrollIntoView();
   }
-};
 
-form.onreset = () => {
-  finishSorting();
-};
-
-messageHandlers.set(Operation.Sort, (timeSorted: number) => {
-  logMessage(`Sorting finished: ${timeSorted - timeStarted}ms`);
-  finishSorting();
-});
-
-messageHandlers.set(Operation.Push, (timeAccepted: number) => {
-  const timePushed = pushedStack.shift();
-
-  logMessage(`Sending item took: ${timeAccepted - timePushed}ms`);
-});
-
-messageHandlers.set(Operation.Enqueue, (timeEnqueued: number) => {
-  const timePushed = enqueuedStack.shift();
-
-  logMessage(`Processing item took: ${timeEnqueued - timePushed}ms`);
-});
-
-function finishSorting() {
-  clearSchedule();
-  clearLogStacks();
-  terminateWorker();
-  enableForm();
+  clear() {
+    this.element.innerHTML = '';
+  }
 }
 
-function logMessage(message: string) {
-  const element = document.createElement('li');
+class Logger<T> {
+  constructor(private readonly writer: IWriter<T>) {}
 
-  element.textContent = message;
+  log(message: T) {
+    this.writer.write(message);
+  }
 
-  log.appendChild(element);
-  element.scrollIntoView();
+  clear() {
+    this.writer.clear();
+  }
 }
 
-function clearSchedule() {
-  clearInterval(timer);
+export interface IEmitter<T> {
+  next(): T;
+}
+class RandomEmitter implements IEmitter<number> {
+  next() {
+    return Math.random();
+  }
 }
 
-function clearLogStacks() {
-  pushedStack = [];
-  enqueuedStack = [];
+class Streamer<T> {
+  private timer: number;
+  private listener: (x: T) => void;
+
+  constructor(
+    private readonly emitter: IEmitter<T>,
+    private readonly interval: number
+  ) {}
+
+  subscribe(listener: (x: T) => void) {
+    this.listener = listener;
+  }
+
+  start() {
+    this.timer = globalThis.setInterval(() => this.emit(), this.interval);
+  }
+
+  emit() {
+    this.listener(this.emitter.next());
+  }
+
+  terminate() {
+    globalThis.clearInterval(this.timer);
+  }
 }
 
-function clearMessageLog() {
-  log.innerHTML = '';
-}
-
-function createWorker() {
-  worker = new Worker('./worker.ts');
-
-  worker.onmessage = ({ data }) => {
-    handleMessage(data);
+export interface IMeasureMessage extends IMessage {
+  payload: {
+    number: number;
+    time: number;
   };
 }
 
-function terminateWorker() {
-  worker.terminate();
+class PushedCommand implements ICommand {
+  readonly type = Operation.PushEnd;
+
+  constructor(
+    private readonly logger: Logger<string>,
+    private readonly measure: PerformanceMeasure<number>
+  ) {}
+
+  execute(message: IMeasureMessage) {
+    const { number, time } = message.payload;
+    const pushed = this.measure.pushed.get(number);
+    const received = time;
+
+    this.measure.pushed.delete(number);
+
+    this.logger.log(`Sending item took: ${received - pushed}ms`);
+  }
+}
+class EnqueuedCommand implements ICommand {
+  readonly type = Operation.EnqueueEnd;
+
+  constructor(
+    private readonly logger: Logger<string>,
+    private readonly measure: PerformanceMeasure<number>
+  ) {}
+
+  execute(message: IMeasureMessage) {
+    const { number, time } = message.payload;
+    const enqueued = this.measure.queued.get(number);
+    const received = time;
+
+    this.measure.queued.delete(number);
+
+    this.logger.log(`Enqueuing item took: ${received - enqueued}ms`);
+  }
+}
+class SortingFinishedCommand implements ICommand {
+  readonly type = Operation.SortEnd;
+
+  constructor(
+    private readonly logger: Logger<string>,
+    private readonly measure: PerformanceMeasure<number>
+  ) {}
+
+  execute(message: IMessage<number>) {
+    const { started } = this.measure;
+    const finished = message.payload;
+
+    this.logger.log(`Sorting finished, took: ${finished - started}ms`);
+  }
 }
 
-function disableForm() {
-  const controls = form.querySelectorAll('input,[type=submit]');
+class StopStreamingCommand implements ICommand {
+  readonly type = Operation.SortEnd;
 
-  Array.from(controls).forEach((c) => c.setAttribute('disabled', 'disabled'));
-  form.querySelector('[type=reset]').removeAttribute('disabled');
+  constructor(private readonly streamer: Sorter) {}
+
+  execute() {
+    this.streamer.dispose();
+  }
 }
 
-function enableForm() {
-  const controls = form.querySelectorAll('input,[type=submit]');
+class PerformanceMeasure<T> {
+  started: number;
+  pushed = new Map<T, number>();
+  queued = new Map<T, number>();
 
-  Array.from(controls).forEach((c) => c.removeAttribute('disabled'));
-  form.querySelector('[type=reset]').setAttribute('disabled', 'disabled');
+  clear() {
+    this.started = 0;
+    this.pushed.clear();
+    this.queued.clear();
+  }
 }
 
-function handleMessage({ op, payload }: IMessage) {
-  messageHandlers.get(op)?.(payload);
+class SendNextValueCommand implements ICommand {
+  readonly type = Operation.PushStart;
+
+  constructor(
+    private readonly worker: Worker,
+    private readonly measure: PerformanceMeasure<number>
+  ) {}
+
+  execute(message: IMessage<number>) {
+    const now = Date.now();
+
+    this.measure.pushed.set(message.payload, now);
+    this.measure.queued.set(message.payload, now);
+
+    this.worker.postMessage(message);
+  }
+}
+class StartSortingCommand implements ICommand {
+  readonly type = Operation.SortStart;
+
+  constructor(
+    private readonly worker: Worker,
+    private readonly logger: Logger<string>,
+    private readonly measure: PerformanceMeasure<number>
+  ) {}
+
+  execute(message: IMessage<number>) {
+    this.measure.started = Date.now();
+
+    this.worker.postMessage({
+      op: message.op
+    } as IMeasureMessage);
+    this.logger.log('Starting sort.');
+  }
 }
 
-function startSorting() {
-  const message: IMessage = {
-    op: Operation.Sort
-  };
+class Sorter {
+  readonly streamer: Streamer<number>;
+  readonly logger: Logger<string>;
+  readonly worker: Worker;
+  readonly receiver: MessageHandler;
+  readonly sender: MessageHandler;
+  readonly measure: PerformanceMeasure<number>;
 
-  timeStarted = Date.now();
-  logMessage('Sorting started.');
-  worker.postMessage(message);
-}
+  constructor(interval: number) {
+    this.worker = new Worker('./worker.ts');
+    this.streamer = new Streamer(new RandomEmitter(), interval);
+    this.logger = new Logger(new ElementWriter(log));
+    this.receiver = new MessageHandler();
+    this.sender = new MessageHandler();
+    this.measure = new PerformanceMeasure();
+  }
 
-function scheduleRandom(interval: number) {
-  timer = setInterval(() => {
-    const message: IMessage<number> = {
-      op: Operation.Push,
-      payload: Math.random()
+  init() {
+    this.streamer.subscribe((x) => this.push(x));
+    this.worker.onmessage = ({ data }) => this.onmessage(data);
+
+    this.receiver.add(new PushedCommand(this.logger, this.measure));
+    this.receiver.add(new EnqueuedCommand(this.logger, this.measure));
+    this.receiver.add(new SortingFinishedCommand(this.logger, this.measure));
+    this.receiver.add(new StopStreamingCommand(this));
+
+    this.sender.add(new SendNextValueCommand(this.worker, this.measure));
+    this.sender.add(
+      new StartSortingCommand(this.worker, this.logger, this.measure)
+    );
+  }
+
+  onmessage(message: IMessage) {
+    this.receiver.handle(message);
+  }
+
+  start() {
+    this.logger.clear();
+    this.measure.clear();
+
+    this.sender.handle({
+      op: Operation.SortStart
+    });
+    this.streamer.start();
+  }
+
+  push(number: number) {
+    const message: IMessage = {
+      op: Operation.PushStart,
+      payload: number
     };
 
-    pushedStack.push(Date.now());
-    enqueuedStack.push(Date.now());
-    worker.postMessage(message);
-  }, interval);
+    this.sender.handle(message);
+  }
+
+  dispose() {
+    this.streamer.terminate();
+    this.worker.terminate();
+    this.receiver.clear();
+    this.sender.clear();
+  }
 }
+
+class Runner {
+  private sorter: Sorter;
+
+  constructor(private readonly form: HTMLFormElement) {}
+
+  init() {
+    this.form.onsubmit = (e) => {
+      e.preventDefault();
+      this.start();
+    };
+    this.form.onreset = () => this.dispose();
+  }
+
+  start() {
+    const interval = +form.interval.value;
+
+    this.sorter = new Sorter(interval);
+
+    this.sorter.init();
+    this.sorter.start();
+  }
+
+  dispose() {
+    this.sorter.dispose();
+  }
+}
+
+const runner = new Runner(form);
+
+runner.init();
