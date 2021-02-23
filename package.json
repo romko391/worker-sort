@@ -1,0 +1,17 @@
+{
+  "name": "worker-sort",
+  "version": "1.0.0",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx parcel serve src/index.html",
+    "build": "npx parcel build src/index.html"
+  },
+  "keywords": [],
+  "author": "https://romko.me",
+  "license": "ISC",
+  "devDependencies": {
+    "parcel": "^2.0.0-beta.1",
+    "sass": "^1.32.8",
+    "typescript": "^4.1.5"
+  }
+}

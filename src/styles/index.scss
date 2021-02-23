@@ -1,0 +1,44 @@
+:root {
+  font-size: 16px;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.main {
+  border: 1px solid black;
+
+  display: flex;
+  gap: 1rem;
+
+  height: 50vh;
+  width: 50vw;
+  min-width: 640px;
+}
+
+.fieldset {
+  margin-bottom: 1rem;
+}
+
+.content,
+.aside {
+  height: inherit;
+  width: 50%;
+  overflow: auto;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.input,
+.button {
+  font-size: 1.2rem;
+}
