@@ -5,6 +5,10 @@ import { MessageHandler } from './domain/MessageHandler';
 
 const form = document.querySelector('.form') as HTMLFormElement;
 const log = document.querySelector('.log') as HTMLLIElement;
+const controls = form.querySelectorAll('input,[type=submit]') as NodeListOf<
+  HTMLInputElement | HTMLButtonElement
+>;
+const resetControl = form.querySelector('[type=reset]') as HTMLButtonElement;
 
 interface IWriter<T> {
   write(chunk: T): void;
@@ -137,10 +141,10 @@ class SortingFinishedCommand implements ICommand {
 class StopStreamingCommand implements ICommand {
   readonly type = Operation.SortEnd;
 
-  constructor(private readonly streamer: Sorter) {}
+  constructor(private readonly sorter: Sorter) {}
 
   execute() {
-    this.streamer.dispose();
+    this.sorter.dispose();
   }
 }
 
@@ -235,6 +239,7 @@ class Sorter {
     this.sender.handle({
       op: Operation.SortStart
     });
+    this.disableForm();
     this.streamer.start();
   }
 
@@ -252,6 +257,17 @@ class Sorter {
     this.worker.terminate();
     this.receiver.clear();
     this.sender.clear();
+    this.enableForm();
+  }
+
+  enableForm() {
+    Array.from(controls).forEach((x) => (x.disabled = false));
+    resetControl.disabled = true;
+  }
+
+  disableForm() {
+    Array.from(controls).forEach((x) => (x.disabled = true));
+    resetControl.disabled = false;
   }
 }
 
@@ -265,7 +281,9 @@ class Runner {
       e.preventDefault();
       this.start();
     };
-    this.form.onreset = () => this.dispose();
+    this.form.onreset = () => {
+      this.dispose();
+    };
   }
 
   start() {

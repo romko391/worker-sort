@@ -69,7 +69,7 @@ class WorkerSorter {
   }
 }
 
-class SortCommand implements ICommand {
+class SortStartCommand implements ICommand {
   readonly type = Operation.SortStart;
 
   constructor(private readonly sorter: WorkerSorter) {}
@@ -86,7 +86,7 @@ class SortCommand implements ICommand {
   }
 }
 
-class PushCommand implements ICommand {
+class PushStartCommand implements ICommand {
   readonly type = Operation.PushStart;
 
   constructor(private readonly sorter: WorkerSorter) {}
@@ -131,8 +131,8 @@ class WorkerRunner {
   init() {
     this.sorter.init();
 
-    this.receiver.add(new SortCommand(this.sorter));
-    this.receiver.add(new PushCommand(this.sorter));
+    this.receiver.add(new SortStartCommand(this.sorter));
+    this.receiver.add(new PushStartCommand(this.sorter));
   }
 }
 
