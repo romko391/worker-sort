@@ -191,8 +191,8 @@ class StartSortingCommand implements ICommand {
 
     this.worker.postMessage({
       op: message.op
-    } as IMeasureMessage);
-    this.logger.log('Starting sort.');
+    } as IMessage);
+    this.logger.log('Start sorting.');
   }
 }
 
